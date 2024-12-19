@@ -1,5 +1,5 @@
-obj-m += usbhid_module.o
-CFLAGS_usbhid_module.o := -g -DDEBUG
+obj-m += keylogger_module.o
+CFLAGS_keylogger_module.o := -g -DDEBUG
 
 all:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
